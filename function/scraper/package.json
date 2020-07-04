@@ -1,0 +1,8 @@
+{
+  "name": "sug-scrape",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "htmlparser": "^1.7.7"
+  }
+}

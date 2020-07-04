@@ -1,0 +1,108 @@
+Description: Run the scraper on an interval
+
+Parameters:
+
+  ScraperIntervalMinutes:
+    Type: Number
+    Description: Interval on which the scraper runs
+    MinValue: 2
+    Default: 5
+
+  PageURL:
+    Type: String
+    Description: URL of page to scrape
+
+  ScraperCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda function code
+
+  ScraperCodeS3Key:
+    Type: String
+    Description: S3 key containing Lambda function code
+
+  NotificationPhoneNumber:
+    Type: String
+    Description: The phone number to get notified
+
+Resources:
+
+  TimeslotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: Timeslot
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: Timeslot
+          AttributeType: S
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: 'NEW_POOL_SLOT'
+      Subscription:
+        - Endpoint: !Ref NotificationPhoneNumber
+          Protocol: sms
+
+  ScraperFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: scraper-permissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:BatchGetItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:BatchWriteItem'
+                Resource: !GetAtt TimeslotsTable.Arn
+              - Effect: Allow
+                Action: 'sns:Publish'
+                Resource: !Ref NotificationTopic
+
+  ScraperFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref ScraperCodeS3Bucket
+        S3Key: !Ref ScraperCodeS3Key
+      Environment:
+        Variables:
+          PAGE_URL: !Ref PageURL
+          TIMESLOTS_TABLE_NAME: !Ref TimeslotsTable
+          NOTIFICATION_TOPIC_ARN: !Ref NotificationTopic
+      Handler: 'index.handler'
+      Role: !GetAtt ScraperFunctionRole.Arn
+      Runtime: 'nodejs12.x'
+      MemorySize: 256
+      Timeout: 75
+
+  ScraperFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScraperFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt ScraperScheduleRule.Arn
+
+  ScraperScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: !Sub "rate(${ScraperIntervalMinutes} minutes)"
+      State: ENABLED
+      Targets:
+        - Id: invoke-scraper-function
+          Arn: !GetAtt ScraperFunction.Arn
